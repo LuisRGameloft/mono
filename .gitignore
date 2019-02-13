@@ -89,7 +89,9 @@ stamp-h.in
 *~
 *.swp
 *.o
+*.dylib
 .deps
+.libs
 
 # Libtool
 libtool.m4
@@ -130,4 +132,6 @@ mono-*.tar.*
 tmpinst-dir.stamp
 msvc/scripts/inputs/
 extensions-config.h
-
+*.mlpd
+llvm/build/
+llvm/usr/

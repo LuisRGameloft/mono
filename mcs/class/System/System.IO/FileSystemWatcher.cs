@@ -37,6 +37,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Permissions;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace System.IO {
 	[DefaultEvent("Changed")]
@@ -72,7 +73,7 @@ namespace System.IO {
 		{
 			this.notifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
 			this.enableRaisingEvents = false;
-			this.filter = "*.*";
+			this.filter = "*";
 			this.includeSubdirectories = false;
 			this.internalBufferSize = 8192;
 			this.path = "";
@@ -80,7 +81,7 @@ namespace System.IO {
 		}
 
 		public FileSystemWatcher (string path)
-			: this (path, "*.*")
+			: this (path, "*")
 		{
 		}
 
@@ -102,6 +103,9 @@ namespace System.IO {
 			this.start_requested = false;
 			this.enableRaisingEvents = false;
 			this.filter = filter;
+			if (this.filter == "*.*")
+				this.filter = "*";
+
 			this.includeSubdirectories = false;
 			this.internalBufferSize = 8192;
 			this.notifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName;
@@ -114,7 +118,7 @@ namespace System.IO {
 		void InitWatcher ()
 		{
 			lock (lockobj) {
-				if (watcher != null)
+				if (watcher_handle != null)
 					return;
 
 				string managed = Environment.GetEnvironmentVariable ("MONO_MANAGED_WATCHER");
@@ -138,10 +142,6 @@ namespace System.IO {
 					break;
 				case 4: // libgamin
 					ok = FAMWatcher.GetInstance (out watcher, true);
-					watcher_handle = this;
-					break;
-				case 5: // inotify
-					ok = InotifyWatcher.GetInstance (out watcher, true);
 					watcher_handle = this;
 					break;
 				case 6: // CoreFX
@@ -196,7 +196,7 @@ namespace System.IO {
 		internal SearchPattern2 Pattern {
 			get {
 				if (pattern == null) {
-					if (watcher.GetType () == typeof (KeventWatcher))
+					if (watcher?.GetType () == typeof (KeventWatcher))
 						pattern = new SearchPattern2 (MangledFilter, true); //assume we want to ignore case (OS X)
 					else
 						pattern = new SearchPattern2 (MangledFilter);
@@ -250,10 +250,10 @@ namespace System.IO {
 			get { return filter; }
 			set {
 				if (value == null || value == "")
-					value = "*.*";
+					value = "*";
 
 				if (!string.Equals(filter, value, PathInternal.StringComparison)) {
-					filter = value;
+					filter = value == "*.*" ? "*" : value;
 					pattern = null;
 					mangledFilter = null;
 				}
@@ -386,8 +386,8 @@ namespace System.IO {
 				return;
 
 			try {
-				watcher.StopDispatching (watcher_handle);
-				watcher.Dispose (watcher_handle);
+				watcher?.StopDispatching (watcher_handle);
+				watcher?.Dispose (watcher_handle);
 			} catch (Exception) { }
 
 			watcher_handle = null;
@@ -510,17 +510,17 @@ namespace System.IO {
 			case FileAction.Added:
 				lastData.Name = filename;
 				lastData.ChangeType = WatcherChangeTypes.Created;
-				OnCreated (new FileSystemEventArgs (WatcherChangeTypes.Created, path, filename));
+				Task.Run (() => OnCreated (new FileSystemEventArgs (WatcherChangeTypes.Created, path, filename)));
 				break;
 			case FileAction.Removed:
 				lastData.Name = filename;
 				lastData.ChangeType = WatcherChangeTypes.Deleted;
-				OnDeleted (new FileSystemEventArgs (WatcherChangeTypes.Deleted, path, filename));
+				Task.Run (() => OnDeleted (new FileSystemEventArgs (WatcherChangeTypes.Deleted, path, filename)));
 				break;
 			case FileAction.Modified:
 				lastData.Name = filename;
 				lastData.ChangeType = WatcherChangeTypes.Changed;
-				OnChanged (new FileSystemEventArgs (WatcherChangeTypes.Changed, path, filename));
+				Task.Run (() => OnChanged (new FileSystemEventArgs (WatcherChangeTypes.Changed, path, filename)));
 				break;
 			case FileAction.RenamedOldName:
 				if (renamed != null) {
@@ -536,7 +536,8 @@ namespace System.IO {
 				if (renamed == null) {
 					renamed = new RenamedEventArgs (WatcherChangeTypes.Renamed, path, "", filename);
 				}
-				OnRenamed (renamed);
+				var renamed_ref = renamed;
+				Task.Run (() => OnRenamed (renamed_ref));
 				renamed = null;
 				break;
 			default:
@@ -550,7 +551,7 @@ namespace System.IO {
 				return;
 			if (watcher_handle == null)
 				return;
-			watcher.StartDispatching (watcher_handle);
+			watcher?.StartDispatching (watcher_handle);
 		}
 
 		void Stop ()
@@ -559,7 +560,7 @@ namespace System.IO {
 				return;
 			if (watcher_handle == null)
 				return;
-			watcher.StopDispatching (watcher_handle);
+			watcher?.StopDispatching (watcher_handle);
 		}
 		#endregion // Methods
 

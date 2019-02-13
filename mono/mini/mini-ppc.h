@@ -32,8 +32,13 @@
  * reproduceable results for benchmarks */
 #define MONO_ARCH_CODE_ALIGNMENT 32
 
+#ifdef __mono_ppc64__
+#define THUNK_SIZE ((2 + 5) * 4)
+#else
+#define THUNK_SIZE ((2 + 2) * 4)
+#endif
+
 void ppc_patch (guchar *code, const guchar *target);
-void ppc_patch_full (guchar *code, const guchar *target, gboolean is_fd);
 
 struct MonoLMF {
 	/*
@@ -47,13 +52,15 @@ struct MonoLMF {
 	gulong     eip;
 	/* Add a dummy field to force iregs to be aligned when cross compiling from x86 */
 	gulong     dummy;
-	mgreg_t    iregs [MONO_SAVED_GREGS]; /* 13..31 */
+	host_mgreg_t iregs [MONO_SAVED_GREGS]; /* 13..31 */
 	gdouble    fregs [MONO_SAVED_FREGS]; /* 14..31 */
 };
 
 
 typedef struct MonoCompileArch {
 	int fp_conv_var_offset;
+	guint8 *thunks;
+	int thunks_size;
 } MonoCompileArch;
 
 /*
@@ -61,7 +68,7 @@ typedef struct MonoCompileArch {
  * To support this, code needs to follow the following conventions:
  * - for the size of a pointer use sizeof (gpointer)
  * - for the size of a register/stack slot use SIZEOF_REGISTER.
- * - for variables which contain values of registers, use mgreg_t.
+ * - for variables which contain values of registers, use host_mgreg_t or target_mgreg_t.
  * - for loading/saving pointers/ints, use the normal ppc_load_reg/ppc_save_reg ()
  *   macros.
  * - for loading/saving register sized quantities, use the ppc_ldr/ppc_str 
@@ -252,7 +259,6 @@ typedef struct MonoCompileArch {
 #if !defined(MONO_CROSS_COMPILE) && !defined(TARGET_PS3)
 #define MONO_ARCH_SOFT_DEBUG_SUPPORTED 1
 #endif
-#define MONO_ARCH_HAVE_OP_TAIL_CALL 1
 #define MONO_ARCH_HAVE_PATCH_CODE_NEW 1
 
 // Does the ABI have a volatile non-parameter register, so tailcall
@@ -281,7 +287,7 @@ typedef struct {
 
 #define MONO_INIT_CONTEXT_FROM_FUNC(ctx,start_func) g_assert_not_reached ()
 
-#elif defined(__APPLE__)
+#elif defined (__APPLE__)
 
 typedef struct {
 	unsigned long sp;
@@ -299,11 +305,11 @@ typedef struct {
 #else
 
 typedef struct {
-	mgreg_t sp;
+	host_mgreg_t sp;
 #ifdef __mono_ppc64__
-	mgreg_t cr;
+	host_mgreg_t cr;
 #endif
-	mgreg_t lr;
+	host_mgreg_t lr;
 } MonoPPCStackFrame;
 
 #ifdef G_COMPILER_CODEWARRIOR
@@ -350,13 +356,13 @@ extern guint8* mono_ppc_create_pre_code_ftnptr (guint8 *code);
 
 #if defined(__linux__)
 #define MONO_ARCH_USE_SIGACTION 1
-#elif defined (__APPLE__) && defined (_STRUCT_MCONTEXT)
-#define MONO_ARCH_USE_SIGACTION 1
-#elif defined (__APPLE__) && !defined (_STRUCT_MCONTEXT)
+#elif defined (__APPLE__)
 #define MONO_ARCH_USE_SIGACTION 1
 #elif defined(__NetBSD__)
 #define MONO_ARCH_USE_SIGACTION 1
 #elif defined(__FreeBSD__)
+#define MONO_ARCH_USE_SIGACTION 1
+#elif defined (_AIX)
 #define MONO_ARCH_USE_SIGACTION 1
 #elif defined(MONO_CROSS_COMPILE)
 	typedef MonoContext ucontext_t;
@@ -367,21 +373,18 @@ extern guint8* mono_ppc_create_pre_code_ftnptr (guint8 *code);
 	#define UCONTEXT_REG_FPRn(ctx, n)
 	#define UCONTEXT_REG_NIP(ctx)
 	#define UCONTEXT_REG_LNK(ctx)
-#elif defined (_AIX)
-#define MONO_ARCH_USE_SIGACTION 1
 #else
-/* For other operating systems, we pull the definition from an external file */
-#include "mini-ppc-os.h"
+#error No OS definition for MONO_ARCH_USE_SIGACTION.
 #endif
 
 gboolean
-mono_ppc_tail_call_supported (MonoMethodSignature *caller_sig, MonoMethodSignature *callee_sig);
+mono_ppc_tailcall_supported (MonoMethodSignature *caller_sig, MonoMethodSignature *callee_sig);
 
 void
 mono_ppc_patch (guchar *code, const guchar *target);
 
 void
-mono_ppc_throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, mgreg_t *int_regs, gdouble *fp_regs, gboolean rethrow);
+mono_ppc_throw_exception (MonoObject *exc, unsigned long eip, unsigned long esp, host_mgreg_t *int_regs, gdouble *fp_regs, gboolean rethrow, gboolean preserve_ips);
 
 #ifdef __mono_ppc64__
 #define MONO_PPC_32_64_CASE(c32,c64)	c64
@@ -391,9 +394,6 @@ extern void mono_ppc_emitted (guint8 *code, gint64 length, const char *format, .
 #endif
 
 gboolean mono_ppc_is_direct_call_sequence (guint32 *code);
-
-void mono_ppc_patch_plt_entry (guint8 *code, gpointer *got, mgreg_t *regs, guint8 *addr);
-
 
 // Debugging macros for ELF ABI v2
 #ifdef DEBUG_ELFABIV2
@@ -410,7 +410,7 @@ extern char* mono_type_full_name (MonoType *type);
 {char *debug_env; if (debug_env = getenv("DEBUG_ELFABIV2")) { printf("%s, size: %d\n", mono_type_get_name(a), mini_type_stack_size (a, 0)); fflush(stdout); g_free (debug_env); } }
 
 #define DEBUG_ELFABIV2_mono_print_class(a) \
-{char *debug_env; if (debug_env = getenv("DEBUG_ELFABIV2")) { printf("%s\n", mono_type_get_name(&a->byval_arg)); fflush(stdout); g_free (debug_env); } }
+	{char *debug_env; if (debug_env = getenv("DEBUG_ELFABIV2")) { printf("%s\n", mono_type_get_name(m_class_get_byval_arg (a))); fflush(stdout); g_free (debug_env); } }
 
 #else
 

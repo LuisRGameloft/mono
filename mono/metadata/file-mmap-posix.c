@@ -286,7 +286,9 @@ open_file_map (const char *c_path, int input_fd, int mode, gint64 *capacity, int
 	}
 
 	if (result != 0 || *capacity > buf.st_size) {
+#ifdef HAVE_FTRUNCATE
 		int unused G_GNUC_UNUSED = ftruncate (fd, (off_t)*capacity);
+#endif
 	}
 
 	handle = g_new0 (MmapHandle, 1);
@@ -347,7 +349,7 @@ open_memory_map (const char *c_mapName, int mode, gint64 *capacity, int access, 
 			*ioerror = COULD_NOT_MAP_MEMORY;
 			goto done;
 		}
-		file_name = (char *)alloca (alloc_size);
+		file_name = g_newa (char, alloc_size);
 		strcpy (file_name, tmp_dir);
 		strcat (file_name, MONO_ANON_FILE_TEMPLATE);
 
@@ -358,7 +360,9 @@ open_memory_map (const char *c_mapName, int mode, gint64 *capacity, int access, 
 		}
 
 		unlink (file_name);
+#ifdef HAVE_FTRUNCATE
 		unused = ftruncate (fd, (off_t)*capacity);
+#endif
 
 		handle = g_new0 (MmapHandle, 1);
 		handle->ref_count = 1;
@@ -387,7 +391,7 @@ mono_mmap_open_file (const gunichar2 *path, gint path_length, int mode, const gu
 	if (!mapName) {
 		char * c_path = mono_utf16_to_utf8 (path, path_length, error);
 		return_val_if_nok (error, NULL);
-		handle = open_file_map (c_path, -1, mode, capacity, access, options, ioerror);
+		handle = (MmapHandle*)open_file_map (c_path, -1, mode, capacity, access, options, ioerror);
 		g_free (c_path);
 		return handle;
 	}
@@ -416,7 +420,7 @@ mono_mmap_open_file (const gunichar2 *path, gint path_length, int mode, const gu
 		}
 		named_regions_unlock ();
 	} else
-		handle = open_memory_map (c_mapName, mode, capacity, access, options, ioerror);
+		handle = (MmapHandle*)open_memory_map (c_mapName, mode, capacity, access, options, ioerror);
 
 	g_free (c_mapName);
 	return handle;
@@ -470,7 +474,7 @@ mono_mmap_close (void *mmap_handle, MonoError *error)
 }
 
 void
-mono_mmap_configure_inheritability (void *mmap_handle, gboolean inheritability, MonoError *error)
+mono_mmap_configure_inheritability (void *mmap_handle, gint32 inheritability, MonoError *error)
 {
 	MmapHandle *h = (MmapHandle *)mmap_handle;
 	int fd, flags;
@@ -489,8 +493,10 @@ mono_mmap_flush (void *mmap_handle, MonoError *error)
 {
 	MmapInstance *h = (MmapInstance *)mmap_handle;
 
+#ifdef HAVE_MSYNC
 	if (h)
 		msync (h->address, h->length, MS_SYNC);
+#endif
 }
 
 int
@@ -532,7 +538,7 @@ mono_mmap_map (void *handle, gint64 offset, gint64 *size, int access, void **mma
 	return COULD_NOT_MAP_MEMORY;
 }
 
-gboolean
+MonoBoolean
 mono_mmap_unmap (void *mmap_handle, MonoError *error)
 {
 	int res = 0;

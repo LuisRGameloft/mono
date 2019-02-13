@@ -12,6 +12,7 @@
 #include <mono/utils/mono-context.h>
 #include <mono/utils/mono-os-mutex.h>
 #include <mono/utils/mono-os-semaphore.h>
+#include <mono/metadata/icalls.h>
 
 struct _MonoProfilerDesc {
 	MonoProfilerHandle next;
@@ -59,6 +60,8 @@ typedef struct {
 	guint32 sample_freq;
 
 	gboolean allocations;
+
+	gboolean clauses;
 
 	gboolean call_contexts;
 	void (*context_enable) (void);
@@ -130,6 +133,10 @@ struct _MonoProfilerCallContext {
 	 * is set to NULL.
 	 */
 	gpointer return_value;
+	/*
+	 * Points to an array of addresses of stack slots holding the arguments.
+	 */
+	gpointer *args;
 };
 
 MonoProfilerCallInstrumentationFlags mono_profiler_get_call_instrumentation_flags (MonoMethod *method);
@@ -142,6 +149,12 @@ static inline gboolean
 mono_profiler_allocations_enabled (void)
 {
 	return mono_profiler_state.allocations;
+}
+
+static inline gboolean
+mono_profiler_clauses_enabled (void)
+{
+	return mono_profiler_state.clauses;
 }
 
 #define _MONO_PROFILER_EVENT(name, ...) \

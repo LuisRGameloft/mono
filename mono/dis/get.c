@@ -22,6 +22,7 @@
 #include <mono/metadata/class.h>
 #include <mono/metadata/marshal.h>
 #include <mono/metadata/metadata-internals.h>
+#include <mono/utils/mono-math.h>
 
 extern gboolean substitute_with_mscorlib_p;
 
@@ -371,8 +372,7 @@ get_typedef_or_ref (MonoImage *m, guint32 dor_token, MonoGenericContainer *conta
 
 	}
 	
-	if (temp)
-		g_free (temp);
+	g_free (temp);
 
 	return s;
 }
@@ -1003,8 +1003,9 @@ dis_stringify_method_signature_full (MonoImage *m, MonoMethodSignature *method, 
 	g_string_append (result_ret, " (");
 	g_free (retval);
 
-	g_string_prepend (result, result_ret->str);
-	g_string_free (result_ret, FALSE);
+	g_string_append (result_ret, result->str);
+	g_string_free (result, TRUE);
+	result = result_ret;
 
 	if (show_method_tokens && methoddef_row)
 		g_string_append_printf (result, " /* 0x%X */ ",
@@ -1139,7 +1140,7 @@ dis_stringify_object_with_class (MonoImage *m, MonoClass *c, gboolean prefix, gb
 static char *
 dis_stringify_object (MonoImage *m, MonoType *type, gboolean is_def)
 {
-	MonoClass *c = mono_class_from_mono_type (type);
+	MonoClass *c = mono_class_from_mono_type_internal (type);
 	return dis_stringify_object_with_class (m, c, TRUE, is_def);
 }
 
@@ -1150,8 +1151,10 @@ dis_stringify_type (MonoImage *m, MonoType *type, gboolean is_def)
 	char *bare = NULL, *mods = NULL;
 	char *result;
 
-	if (type->num_mods)
-		mods = dis_stringify_modifiers (m, type->num_mods, type->modifiers);
+	if (type->has_cmods) {
+		MonoCustomModContainer *cmods = mono_type_get_cmods (type);
+		mods = dis_stringify_modifiers (cmods->image, cmods->count, cmods->modifiers);
+	}
 
 	switch (type->type){
 	case MONO_TYPE_BOOLEAN:
@@ -1371,10 +1374,8 @@ get_field_signature (MonoImage *m, guint32 blob_signature, MonoGenericContainer 
 		allocated_type_string,
 		allocated_modifier_string ? allocated_modifier_string : "");
 	
-	if (allocated_modifier_string)
-		g_free (allocated_modifier_string);
-	if (allocated_type_string)
-		g_free (allocated_type_string);
+	g_free (allocated_modifier_string);
+	g_free (allocated_type_string);
 	
 	return res;
 }
@@ -1393,8 +1394,7 @@ get_field_literal_type (MonoImage *m, guint32 blob_signature)
 	ptr++; len--;
 	
 	ptr = get_custom_mod (m, ptr, &allocated_modifier_string);
-	if (allocated_modifier_string)
-		g_free (allocated_modifier_string);
+	g_free (allocated_modifier_string);
 
 	return (MonoTypeEnum) *ptr;
 	
@@ -1947,7 +1947,7 @@ get_method_core (MonoImage *m, guint32 token, gboolean fullsig, MonoGenericConta
 
 	mh = mono_get_method_checked (m, token, NULL, (MonoGenericContext *) container, error);
 	if (mh) {
-		if (mono_method_signature (mh)->is_inflated)
+		if (mono_method_signature_internal (mh)->is_inflated)
 			container = mono_method_get_generic_container (((MonoMethodInflated *) mh)->declaring);
 		esname = get_escaped_name (mh->name);
 		sig = dis_stringify_type (m, m_class_get_byval_arg (mh->klass), TRUE);
@@ -2352,17 +2352,10 @@ get_constant (MonoImage *m, MonoTypeEnum t, guint32 blob_index)
 		return g_strdup_printf ("int64(0x%08x%08x)", high, low);
 	}
 	case MONO_TYPE_R4: {
-		gboolean normal;
 		float r;
 		readr4 (ptr, &r);
 
-		/* Crazy solaris systems doesn't have isnormal */
-#ifdef HAVE_ISFINITE
-		normal = isfinite (r);
-#else
-		normal = !dis_isinf (r) && !dis_isnan (r);
-#endif
-		if (!normal) {
+		if (!mono_isfinite (r)) {
 			return g_strdup_printf ("float32(0x%08x)", read32 (ptr));
 		} else {
 			char *str = stringify_double ((double) r);
@@ -2372,17 +2365,10 @@ get_constant (MonoImage *m, MonoTypeEnum t, guint32 blob_index)
 		}
 	}	
 	case MONO_TYPE_R8: {
-		gboolean normal;
 		double r;
 		readr8 (ptr, &r);
 
-		/* Crazy solaris systems doesn't have isnormal */
-#ifdef HAVE_ISFINITE
-		normal = isfinite (r);
-#else
-		normal = isnormal (r);
-#endif
-		if (!normal) {
+		if (!mono_isfinite (r)) {
 			guint32 low, high;
 			low = read32 (ptr);
 			high = read32 (ptr + 4);
@@ -2507,8 +2493,7 @@ get_token_type (MonoImage *m, guint32 token, MonoGenericContainer *container)
 
 	}
 	
-	if (temp)
-		g_free (temp);
+	g_free (temp);
 
 	return s;
 }
