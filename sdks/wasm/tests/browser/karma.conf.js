@@ -9,11 +9,14 @@ module.exports = function(config) {
         },
         files: [
             {pattern: './publish/http-spec.js',watched:true,served:true,included:true},
+            {pattern: './publish/core-bindings-spec.js',watched:true,served:true,included:true},
+            {pattern: './publish/issues-spec.js',watched:true,served:true,included:true},
             {pattern: './publish/mono.wasm', included: false, served: true, type: 'wasm'},
             {pattern: './publish/mono.js', included: false, served: true},
             {pattern: './publish/mono-config.js', included: false, served: true},
             {pattern: './publish/runtime.js', included: false, served: true},
             {pattern: './publish/managed/*.dll', included: false, served: true},
+            {pattern: './publish/managed/*.pdb', included: false, served: true},
             {pattern: './publish/**/*.txt', included: false, served: true, type: 'text'},
         ],
         //load karma-mocha-reporter and karma-html
@@ -29,9 +32,15 @@ module.exports = function(config) {
             properties: {} // key value pair of properties to add to the <properties> section of the report
         },
         //load karma-jasmine-dom and karma-jasmine
-        frameworks: ['jasmine-dom','jasmine','mocha', 'chai'],
+        frameworks: ['jasmine-dom','jasmine','mocha', 'chai', 'websocket-server'],
         //load karma-chrome-launcher
-        browsers: ['ChromeHeadless'],
+        browsers: ['ChromeHeadless', 'NoSandBoxHeadless'],
+        customLaunchers: {
+            NoSandBoxHeadless: {
+                base: 'ChromeHeadless',
+                flags: ['--no-sandbox']
+            }
+        },
         logLevel: config.LOG_INFO,
         client: {
             //If false, Karma will not remove iframes upon the completion of running the tests
@@ -41,15 +50,66 @@ module.exports = function(config) {
                 source: [
                     //indicate 'index.html' file that will be loaded in the browser
                     //the 'index' tag will be used to get the access to the Document object of 'index.html'
-                    {src:'./publish/http-spec.html', tag:'httpspec'}
+                    {src:'./publish/http-spec.html', tag:'httpspec'},
+                    {src:'./publish/core-bindings-spec.html', tag:'corebindingsspec'},
+                    {src:'./publish/issues-spec.html', tag:'issuesspec'}
                 ],
-                auto: true,
                 timeout: 10000,
                 abort: 60000,
                 width: "730px",
                 height: "30vw"        
 
             }
-        }
+        },
+        websocketServer: {
+            port: 8889,
+            beforeStart: (server) => {
+                function originIsAllowed(origin) {
+                    // put logic here to detect whether the specified origin is allowed.
+                    return true;
+                  }
+            server.on('request', (request) => {
+            //     console.log(new Date() + ' new websocket request...');
+                if (!originIsAllowed(request.origin)) {
+                    // Make sure we only accept requests from an allowed origin
+                    request.reject();
+                    console.log((new Date()) + ' Connection from origin ' + request.origin + ' rejected.');
+                    return;
+                }
+                
+                try 
+                {
+                    var connection = request.accept('echo-protocol', request.origin);
+                    console.log((new Date()) + ' Connection accepted.');
+                    connection.on('message', function(message) {
+                        if (message.type === 'utf8') {
+                            if (message.utf8Data === "closeme")
+                            {
+                                connection.close(1000, "bye!");
+                            }
+                            else {
+                                console.log('Received Message: ' + message.utf8Data);
+                                connection.sendUTF(message.utf8Data);
+                            }
+                        }
+                        else if (message.type === 'binary') {
+                            console.log('Received Binary Message of ' + message.binaryData.length + ' bytes');
+                            connection.sendBytes(message.binaryData);
+                        }
+                    });
+                    connection.on('close', function(reasonCode, description) {
+                        console.log((new Date()) + ' Peer ' + connection.remoteAddress + ' disconnected.');
+                    });            
+                }
+                catch (error)
+                {
+                    console.log(error.message);
+                }
+              });
+            },
+            afterStart: (server) => {
+              console.log('Server now listening!');
+            }
+          }        
     });
   };

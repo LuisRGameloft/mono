@@ -9,6 +9,8 @@ namespace HelloWorld
             Console.WriteLine("Hello World!");
 
             Console.WriteLine(typeof(object).Assembly.FullName);
+            Console.WriteLine(System.Reflection.Assembly.GetEntryAssembly ());
+            Console.WriteLine(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
         }
     }
 }

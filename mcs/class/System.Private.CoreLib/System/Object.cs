@@ -14,6 +14,9 @@ namespace System
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		internal static extern int InternalGetHashCode (object o);
 
+		[Intrinsic]
 		internal ref byte GetRawData () => throw new NotImplementedException ();
+
+		internal object CloneInternal () => MemberwiseClone ();
 	}
 }

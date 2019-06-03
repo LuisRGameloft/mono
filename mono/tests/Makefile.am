@@ -1,6 +1,6 @@
 include $(top_srcdir)/mk/common.mk
 
-SUBDIRS = gc-descriptors . testing_gac assembly-load-reference llvmonly-mixed
+SUBDIRS = gc-descriptors . testing_gac assembly-load-reference llvmonly-mixed fullaot-mixed
 
 check-local:
 	ok=:; \
@@ -34,13 +34,13 @@ ARRAY_COOP_CS=\
 BUILT_SOURCES += $(ARRAY_COOP_CS)
 
 array-coop-bigvt.cs: array-coop-bigvt.sh array-coop-1.cs array-coop-2.cs
-	 . $(srcdir)/array-coop-bigvt.sh $(srcdir) > $@
+	 $(srcdir)/array-coop-bigvt.sh $(srcdir) > $@
 
 array-coop-smallvt.cs: array-coop-smallvt.sh array-coop-1.cs array-coop-2.cs
-	 . $(srcdir)/array-coop-smallvt.sh $(srcdir) > $@
+	 $(srcdir)/array-coop-smallvt.sh $(srcdir) > $@
 
 array-coop-int.cs: array-coop-int.sh array-coop-1.cs array-coop-2.cs
-	 . $(srcdir)/array-coop-int.sh $(srcdir) > $@
+	 $(srcdir)/array-coop-int.sh $(srcdir) > $@
 
 # These are not actually tests, but they are source files part of another test.
 TAILCALL_DISABLED_TESTS_COMPILE = \
@@ -206,7 +206,7 @@ if HYBRID_AOT_TESTS
 PROFILE_MCS_FLAGS = -d:MOBILE,MOBILE_LEGACY 
 endif
 
-if AOT_FULL_INTERP_TESTS
+if FULL_AOT_INTERP_TESTS
 PROFILE_MCS_FLAGS = -d:MOBILE,MOBILE_LEGACY
 endif
 
@@ -995,12 +995,21 @@ TESTS_IL_SRC=			\
 	bug-45841-fpstack-exceptions.il \
 	instance_tailrec.il	\
 	dim-constrainedcall.il	\
+	dim-constrained3.il	\
+	dim-constrained3_gm.il	\
 	dim-diamondshape.il	\
 	dim-genericmethods.il	\
 	dim-methodimpl.il	\
 	dim-sharedgenerics.il	\
 	dim-simple.il	\
 	dim-valuetypes.il \
+	dim-nested-types.il \
+	dim-generic-interface.il \
+	dim-implements-multiple-interfaces.il \
+	dim-sealed.il \
+	dim-protected-accessibility1.il \
+	dim-protected-accessibility2.il \
+	twopassvariance.il \
 	tailcall-generic-cast-conservestack-il.il \
 	tailcall-generic-cast-nocrash-il.il \
 	tailcall-member-function-in-valuetype.il \
@@ -1008,7 +1017,11 @@ TESTS_IL_SRC=			\
 	tailcall-valuetype-parameter.il \
 	ldfldvt.il \
 	newobj-abstract.il \
-	invalid-isbyreflike.il
+	invalid-isbyreflike.il \
+	custom-modifiers-append.1.il \
+	gh-13056_mono_local_cprop_av.il \
+	gh-13057_mono_local_emulate_ops_av.il \
+	module-cctor-entrypoint.il
 
 # This test crashes the runtime, even with recent fixes.
 #	incorrect-ldvirtftn-read-behind-for-dup.il
@@ -1533,7 +1546,7 @@ PROFILE_DISABLED_TESTS += \
 	namedmutex-destroy-race.exe
 endif
 
-if AOT_FULL_INTERP_TESTS
+if FULL_AOT_INTERP_TESTS
 
 # AppDomain tests
 PROFILE_DISABLED_TESTS += \
@@ -1589,6 +1602,28 @@ PROFILE_DISABLED_TESTS += \
 
 PROFILE_DISABLED_TESTS += \
 	transparentproxy.exe
+endif
+
+REMOTING_DISABLED_TESTS = \
+	async-exc-compilation.exe \
+	bug-544446.exe \
+	context-static.exe \
+	remoting1.exe \
+	remoting2.exe \
+	remoting3.exe \
+	remoting5.exe \
+	nullable_boxing.2.exe
+
+if FULL_AOT_TESTS
+PROFILE_DISABLED_TESTS += $(REMOTING_DISABLED_TESTS)
+endif
+
+if HYBRID_AOT_TESTS
+PROFILE_DISABLED_TESTS += $(REMOTING_DISABLED_TESTS)
+endif
+
+if FULL_AOT_INTERP_TESTS
+PROFILE_DISABLED_TESTS += $(REMOTING_DISABLED_TESTS)
 endif
 
 AOT_DISABLED_TESTS= \
@@ -1964,7 +1999,7 @@ TESTSAOT_GSHARED=$(TESTS_GSHARED:.exe=.exe$(PLATFORM_AOT_SUFFIX))
 TESTSAOT_TAILCALL=$(TESTS_TAILCALL_COMPILE:.exe=.exe$(PLATFORM_AOT_SUFFIX))
 endif
 
-EXTRA_DIST=test-driver test-runner.cs $(TESTS_CS_SRC) $(TESTS_IL_SRC) \
+EXTRA_DIST=common_mixed.mk test-driver test-runner.cs $(TESTS_CS_SRC) $(TESTS_IL_SRC) \
 	$(TESTS_BENCH_SRC) $(TESTS_STRESS_SRC) stress-runner.pl \
 	array-coop-1.cs array-coop-2.cs \
 	array-coop-bigvt.cs array-coop-int.cs array-coop-smallvt.cs \
@@ -1984,7 +2019,7 @@ tailcall/coreclr/JIT/opt/Tailcall/TailcallVerifyWithPrefix.exe: \
 
 if !FULL_AOT_TESTS
 if !HYBRID_AOT_TESTS
-if !AOT_FULL_INTERP_TESTS
+if !FULL_AOT_INTERP_TESTS
 TEST_DRIVER_HARD_KILL_FEATURE=-r:$(CLASS)/Mono.Posix.dll
 endif
 endif
@@ -2150,6 +2185,9 @@ testinterp: test-runner.exe compile-tests
 
 testfullaotinterp: test-runner.exe compile-tests
 	$(TOOLS_RUNTIME) --debug $(TEST_RUNNER) -j a --runtime-args "--full-aot-interp" --testsuite-name "runtime-aot-interp" --timeout 300 --disabled "$(INTERP_DISABLED_TESTS)" $(TESTS_REGULAR)
+
+testllvmonlyinterp: test-runner.exe compile-tests
+	$(TOOLS_RUNTIME) --debug $(TEST_RUNNER) -j a --runtime-args "--llvmonly-interp" --testsuite-name "runtime-aot-interp" --timeout 300 --disabled "$(INTERP_DISABLED_TESTS)" $(TESTS_REGULAR)
 
 testjitspeed: $(JITTEST_PROG) compile-tests
 	for i in $(TESTS_BENCH); do	\

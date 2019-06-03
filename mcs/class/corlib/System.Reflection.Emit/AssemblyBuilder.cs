@@ -402,9 +402,10 @@ namespace System.Reflection.Emit
 			}
 		}
 
-		[MonoTODO]
 		public override bool ReflectionOnly {
-			get { return base.ReflectionOnly; }
+			get {
+				return access == (uint)AssemblyBuilderAccess.ReflectionOnly;
+			}
 		}
 
 		public void AddResourceFile (string name, string fileName)
@@ -917,7 +918,7 @@ namespace System.Reflection.Emit
 			ModuleBuilder mainModule = null;
 			if (modules != null) {
 				foreach (ModuleBuilder module in modules)
-					if (module.FullyQualifiedName == assemblyFileName)
+					if (module.FileName == assemblyFileName)
 						mainModule = module;
 			}
 			if (mainModule == null)
@@ -1270,7 +1271,7 @@ namespace System.Reflection.Emit
 
 		internal override Evidence UnprotectedGetEvidence ()
 		{
-#if MOBILE
+#if MOBILE || DISABLE_SECURITY
 			return null;
 #else
 			// if the host (runtime) hasn't provided it's own evidence...

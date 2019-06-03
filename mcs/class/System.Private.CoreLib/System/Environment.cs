@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Globalization;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using Mono;
@@ -30,6 +31,11 @@ namespace System
 			get;
 		}
 
+		public static string StackTrace {
+			[MethodImpl (MethodImplOptions.NoInlining)] // Prevent inlining from affecting where the stacktrace starts
+			get => new StackTrace (true).ToString (System.Diagnostics.StackTrace.TraceFormat.Normal);
+		}
+
 		public extern static int TickCount {
 			[MethodImplAttribute (MethodImplOptions.InternalCall)]
 			get;
@@ -40,31 +46,6 @@ namespace System
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		public extern static string[] GetCommandLineArgs ();
-
-		static string GetEnvironmentVariableCore (string variable)
-		{
-			using (var h = RuntimeMarshal.MarshalString (variable)) {
-				return internalGetEnvironmentVariable_native (h.Value);
-			}
-		}
-
-		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		extern static string internalGetEnvironmentVariable_native (IntPtr variable);
-
-		public static IDictionary GetEnvironmentVariables ()
-		{
-			throw new NotImplementedException ();
-		}
-
-		static unsafe void SetEnvironmentVariableCore (string variable, string value)
-		{
-			fixed (char *fixed_variable = variable)
-			fixed (char *fixed_value = value)
-				InternalSetEnvironmentVariable (fixed_variable, variable.Length, fixed_value, value?.Length ?? 0);
-		}
-
-		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		static extern unsafe void InternalSetEnvironmentVariable (char *variable, int variable_length, char *value, int value_length);
 
 		public static void FailFast (string message)
 		{
@@ -100,13 +81,6 @@ namespace System
 		{
 			return string.Format (CultureInfo.InvariantCulture, key, values);
 		}
-
-		internal static String GetStackTrace (Exception e, bool needFileInfo)
-		{
-			throw new NotImplementedException ();
-		}
-
-		internal static int GetPageSize () => 0;
 	}
 #endregion
 }

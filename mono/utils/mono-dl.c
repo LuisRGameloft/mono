@@ -150,6 +150,7 @@ mono_dl_open (const char *name, int flags, char **error_msg)
 	}
 	module->main_module = name == NULL? TRUE: FALSE;
 
+	// No GC safe transition because this is called early in main.c
 	lib = mono_dl_open_file (name, lflags);
 
 	if (!lib) {
@@ -356,7 +357,6 @@ MonoDlFallbackHandler *
 mono_dl_fallback_register (MonoDlFallbackLoad load_func, MonoDlFallbackSymbol symbol_func, MonoDlFallbackClose close_func, void *user_data)
 {
 	MonoDlFallbackHandler *handler = NULL;
-	MONO_ENTER_GC_UNSAFE;
 	if (load_func == NULL || symbol_func == NULL)
 		goto leave;
 
@@ -369,7 +369,6 @@ mono_dl_fallback_register (MonoDlFallbackLoad load_func, MonoDlFallbackSymbol sy
 	fallback_handlers = g_slist_prepend (fallback_handlers, handler);
 	
 leave:
-	MONO_EXIT_GC_UNSAFE;
 	return handler;
 }
 

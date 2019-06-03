@@ -4,12 +4,31 @@ namespace System.Diagnostics
 {
 	public static class Debugger
 	{
-		public static readonly string DefaultCategory;
-		public static bool IsAttached { get { throw null; } }
-		public static void Break() { }
-		public static bool IsLogging() { throw null; }
-		public static bool Launch() { throw null; }
-		public static void Log(int level, string category, string message) {}
-		public static void NotifyOfCrossThreadDependency() { }
+		public static readonly string DefaultCategory = "";
+
+		public static bool IsAttached => IsAttached_internal ();
+
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		extern static bool IsAttached_internal ();
+
+		public static void Break ()
+		{
+			// The JIT inserts a breakpoint on the caller.
+		}
+
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		public static extern bool IsLogging();
+
+		public static bool Launch ()
+		{
+			throw new NotImplementedException ();
+		}
+
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		public static extern void Log (int level, string category, string message);
+
+		public static void NotifyOfCrossThreadDependency ()
+		{
+		}
 	}
 }

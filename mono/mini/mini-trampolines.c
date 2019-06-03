@@ -430,6 +430,10 @@ common_call_trampoline (host_mgreg_t *regs, guint8 *code, MonoMethod *m, MonoVTa
 	gboolean imt_call, virtual_;
 	gpointer *orig_vtable_slot, *vtable_slot_to_patch = NULL;
 	MonoJitInfo *ji = NULL;
+	MonoDomain *domain = mono_domain_get ();
+#if LLVM_API_VERSION > 100
+	MonoMethod *orig_method = m;
+#endif
 
 	error_init (error);
 
@@ -488,7 +492,7 @@ common_call_trampoline (host_mgreg_t *regs, guint8 *code, MonoMethod *m, MonoVTa
 				if (in_conflict) {
 					char *class_name = mono_class_full_name (vt->klass);
 					char *method_name = mono_method_full_name (decl, TRUE);
-					mono_error_set_not_supported (error, "Interface method '%s' in class '%s' has multiple candidate implementations.", method_name, class_name);
+					mono_error_set_ambiguous_implementation (error, "Could not call method '%s' with type '%s' because there are multiple incompatible interface methods overriding this method.", method_name, class_name);
 					g_free (class_name);
 					g_free (method_name);
 					return NULL;
@@ -657,8 +661,6 @@ common_call_trampoline (host_mgreg_t *regs, guint8 *code, MonoMethod *m, MonoVTa
 
 	/* the method was jumped to */
 	if (!code) {
-		MonoDomain *domain = mono_domain_get ();
-
 		mini_patch_jump_sites (domain, m, mono_get_addr_from_ftnptr (addr));
 
 		/* Patch the got entries pointing to this method */
@@ -739,6 +741,8 @@ common_call_trampoline (host_mgreg_t *regs, guint8 *code, MonoMethod *m, MonoVTa
 				no_patch = TRUE;
 			}
 #if LLVM_API_VERSION > 100
+			if (!no_patch)
+				mini_patch_llvm_jit_callees (domain, orig_method, addr);
 			/* LLVM code doesn't make direct calls */
 			if (ji && ji->from_llvm)
 				no_patch = TRUE;
@@ -1589,15 +1593,15 @@ mono_find_rgctx_lazy_fetch_trampoline_by_addr (gconstpointer addr)
 	return offset;
 }
 
-static const char*tramp_names [MONO_TRAMPOLINE_NUM] = {
-	"jit",
-	"jump",
-	"rgctx_lazy_fetch",
-	"aot",
-	"aot_plt",
-	"delegate",
-	"generic_virtual_remoting",
-	"vcall"
+static const char* const tramp_names [MONO_TRAMPOLINE_NUM] = {
+	"generic_trampoline_jit",
+	"generic_trampoline_jump",
+	"generic_trampoline_rgctx_lazy_fetch",
+	"generic_trampoline_aot",
+	"generic_trampoline_aot_plt",
+	"generic_trampoline_delegate",
+	"generic_trampoline_generic_virtual_remoting",
+	"generic_trampoline_vcall"
 };
 
 /*
@@ -1607,7 +1611,7 @@ static const char*tramp_names [MONO_TRAMPOLINE_NUM] = {
 const char*
 mono_get_generic_trampoline_simple_name (MonoTrampolineType tramp_type)
 {
-	return tramp_names [tramp_type];
+	return tramp_names [tramp_type] + sizeof ("generic_trampoline_") - 1;
 }
 
 /*
@@ -1615,10 +1619,10 @@ mono_get_generic_trampoline_simple_name (MonoTrampolineType tramp_type)
  *
  *   Returns a pointer to malloc-ed memory.
  */
-char*
+const char*
 mono_get_generic_trampoline_name (MonoTrampolineType tramp_type)
 {
-	return g_strdup_printf ("generic_trampoline_%s", tramp_names [tramp_type]);
+	return tramp_names [tramp_type];
 }
 
 /*

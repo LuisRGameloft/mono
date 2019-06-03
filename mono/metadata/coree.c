@@ -103,7 +103,7 @@ BOOL STDMETHODCALLTYPE _CorDllMain(HINSTANCE hInst, DWORD dwReason, LPVOID lpRes
 
 			image = mono_image_open (file_name, NULL);
 			if (image) {
-				image->has_entry_point = TRUE;
+				image->storage->has_entry_point = TRUE;
 				mono_close_exe_image ();
 				/* Decrement reference count to zero. (Image will not be closed.) */
 				mono_image_close (image);
@@ -928,6 +928,7 @@ mono_load_coree (const char* exe_file_name)
 	if (coree_module_handle)
 		return;
 
+	// No GC safe transition because this is called early in driver.c
 	if (!init_from_coree && exe_file_name)
 		mono_coree_set_act_ctx (exe_file_name);
 
@@ -954,7 +955,7 @@ mono_load_coree (const char* exe_file_name)
 void
 mono_fixup_exe_image (MonoImage* image)
 {
-	if (!init_from_coree && image && image->is_module_handle)
+	if (!init_from_coree && image && m_image_is_module_handle (image))
 		MonoFixupExe ((HMODULE) image->raw_data);
 }
 

@@ -21,9 +21,9 @@ PROFILE_MCS_FLAGS = \
 	-d:MOBILE,MOBILE_LEGACY \
 	-d:FULL_AOT_DESKTOP	\
 	-d:FULL_AOT_RUNTIME \
-	-d:DISABLE_REMOTING \
 	-d:DISABLE_COM \
 	-d:WIN_PLATFORM \
+	-d:WINAOT \
 	-nowarn:1699 \
 	-nostdlib \
 	$(PLATFORM_DEBUG_FLAGS)
@@ -38,7 +38,6 @@ ALWAYS_AOT_BCL = yes
 ALWAYS_AOT_TESTS = yes
 MOBILE_PROFILE = yes
 NO_VTS_TEST = yes
-NO_SRE=1
+NO_SRE = yes
 
-# Note need for trailing comma. If you add, keep it
-PROFILE_TEST_HARNESS_EXCLUDES = MobileNotWorking,PKITS,
+PROFILE_TEST_HARNESS_EXCLUDES = MobileNotWorking PKITS SRE NotWorkingLinqInterpreter

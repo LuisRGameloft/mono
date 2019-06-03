@@ -427,8 +427,8 @@ emit_save_lmf (MonoCompile *cfg, guint8 *code, gint32 lmf_offset)
 	if (mono_arch_have_fast_tls () && mono_tls_get_tls_offset (TLS_KEY_LMF_ADDR) != -1) {
 		code = emit_tls_get (code, ARMREG_R0, mono_tls_get_tls_offset (TLS_KEY_LMF_ADDR));
 	} else {
-		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL,
-							 (gpointer)"mono_tls_get_lmf_addr");
+		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+							 GUINT_TO_POINTER (MONO_JIT_ICALL_mono_tls_get_lmf_addr));
 		code = emit_call_seq (cfg, code);
 	}
 	/* we build the MonoLMF structure on the stack - see mini-arm.h */
@@ -815,13 +815,6 @@ mono_arch_init (void)
 		mono_mprotect (bp_trigger_page, mono_pagesize (), 0);
 	}
 
-	mono_aot_register_jit_icall ("mono_arm_throw_exception", mono_arm_throw_exception);
-	mono_aot_register_jit_icall ("mono_arm_throw_exception_by_token", mono_arm_throw_exception_by_token);
-	mono_aot_register_jit_icall ("mono_arm_resume_unwind", mono_arm_resume_unwind);
-#if defined(MONO_ARCH_GSHAREDVT_SUPPORTED)
-	mono_aot_register_jit_icall ("mono_arm_start_gsharedvt_call", mono_arm_start_gsharedvt_call);
-#endif
-	mono_aot_register_jit_icall ("mono_arm_unaligned_stack", mono_arm_unaligned_stack);
 #if defined(__ARM_EABI__)
 	eabi_supported = TRUE;
 #endif
@@ -2367,17 +2360,13 @@ mono_arch_get_llvm_call_info (MonoCompile *cfg, MonoMethodSignature *sig)
 		case RegTypeFP:
 			lainfo->storage = LLVMArgNormal;
 			break;
-		case RegTypeStructByVal:
+		case RegTypeStructByVal: {
 			lainfo->storage = LLVMArgAsIArgs;
-			if (eabi_supported && ainfo->align == 8) {
-				/* LLVM models this by passing an int64 array */
-				lainfo->nslots = ALIGN_TO (ainfo->struct_size, 8) / 8;
-				lainfo->esize = 8;
-			} else {
-				lainfo->nslots = ainfo->struct_size / sizeof (target_mgreg_t);
-				lainfo->esize = 4;
-			}
+			int slotsize = eabi_supported && ainfo->align == 8 ? 8 : 4;
+			lainfo->nslots = ALIGN_TO (ainfo->struct_size, slotsize) / slotsize;
+			lainfo->esize = slotsize;
 			break;
+		}
 		case RegTypeStructByAddr:
 		case RegTypeStructByAddrOnStack:
 			lainfo->storage = LLVMArgVtypeByRef;
@@ -3491,11 +3480,21 @@ loop_start:
 		case OP_SBB:
 		case OP_ISBB:
 		case OP_SUBCC:
-		case OP_ISUBCC:
-			if (ins->next  && (ins->next->opcode == OP_COND_EXC_C || ins->next->opcode == OP_COND_EXC_IC))
-				/* ARM sets the C flag to 1 if there was _no_ overflow */
-				ins->next->opcode = OP_COND_EXC_NC;
+		case OP_ISUBCC: {
+			int try_count = 2;
+			MonoInst *current = ins;
+
+			/* may require a look-ahead of a couple instructions due to spilling */
+			while (try_count-- && current->next) {
+				if (current->next->opcode == OP_COND_EXC_C || current->next->opcode == OP_COND_EXC_IC) {
+					/* ARM sets the C flag to 1 if there was _no_ overflow */
+					current->next->opcode = OP_COND_EXC_NC;
+					break;
+				}
+				current = current->next;
+			}
 			break;
+		}
 		case OP_IDIV_IMM:
 		case OP_IDIV_UN_IMM:
 		case OP_IREM_IMM:
@@ -4245,8 +4244,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 	cpos = bb->max_offset;
 
     if (mono_break_at_bb_method && mono_method_desc_full_match (mono_break_at_bb_method, cfg->method) && bb->block_num == mono_break_at_bb_bb_num) {
-		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, 
-							 (gpointer)"mono_break");
+		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+							 GUINT_TO_POINTER (MONO_JIT_ICALL_mono_break));
 		code = emit_call_seq (cfg, code);
 	}
 
@@ -4571,8 +4570,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			//*(int*)code = 0xef9f0001;
 			//code += 4;
 			//ARM_DBRK (code);
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, 
-								 (gpointer)"mono_break");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+								 GUINT_TO_POINTER (MONO_JIT_ICALL_mono_break));
 			code = emit_call_seq (cfg, code);
 			break;
 		case OP_RELAXED_NOP:
@@ -5012,40 +5011,6 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 
 			code = realloc_code (cfg, max_len);
 
-			/*
-			 * The stack looks like the following:
-			 * <caller argument area>
-			 * <saved regs etc>
-			 * <rest of frame>
-			 * <callee argument area>
-			 * Need to copy the arguments from the callee argument area to
-			 * the caller argument area, and pop the frame.
-			 */
-			if (call->stack_usage) {
-				int i, prev_sp_offset = 0;
-				
-				/* Compute size of saved registers restored below */
-				if (iphone_abi)
-					prev_sp_offset = 2 * 4;
-				else
-					prev_sp_offset = 1 * 4;
-				for (i = 0; i < 16; ++i) {
-					if (cfg->used_int_regs & (1 << i))
-						prev_sp_offset += 4;
-				}
-
-				code = emit_big_add (code, ARMREG_IP, cfg->frame_reg, cfg->stack_usage + prev_sp_offset);
-
-				/* Copy arguments on the stack to our argument area */
-				// FIXME a fixed size memcpy is desirable here,
-				// at least for larger values of stack_usage.
-				for (i = 0; i < call->stack_usage; i += sizeof (target_mgreg_t)) {
-					ARM_LDR_IMM (code, ARMREG_LR, ARMREG_SP, i);
-					ARM_STR_IMM (code, ARMREG_LR, ARMREG_IP, i);
-				}
-
-			}
-
 			// For reg and membase, get destination in IP.
 
 			if (tailcall_reg) {
@@ -5061,6 +5026,70 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 				} else {
 					ARM_LDR_IMM (code, ARMREG_IP, ins->sreg1, ins->inst_offset);
 				}
+			}
+
+			/*
+			 * The stack looks like the following:
+			 * <caller argument area>
+			 * <saved regs etc>
+			 * <rest of frame>
+			 * <callee argument area>
+			 * <optionally saved IP> (about to be)
+			 * Need to copy the arguments from the callee argument area to
+			 * the caller argument area, and pop the frame.
+			 */
+			if (call->stack_usage) {
+				int i, prev_sp_offset = 0;
+
+				// When we get here, the parameters to the tailcall are already formed,
+				// in registers and at the bottom of the grow-down stack.
+				//
+				// Our goal is generally preserve parameters, and trim the stack,
+				// and, before trimming stack, move parameters from the bottom of the
+				// frame to the bottom of the trimmed frame.
+
+				// For the case of large frames, and presently therefore always,
+				// IP is used as an adjusted frame_reg.
+				// Be conservative and save IP around the movement
+				// of parameters from the bottom of frame to top of the frame.
+				const gboolean save_ip = tailcall_membase || tailcall_reg;
+				if (save_ip)
+					ARM_PUSH (code, 1 << ARMREG_IP);
+
+				// When moving stacked parameters from the bottom
+				// of the frame (sp) to the top of the frame (ip),
+				// account, 0 or 4, for the conditional save of IP.
+				const int offset_sp = save_ip ? 4 : 0;
+				const int offset_ip = (save_ip && (cfg->frame_reg == ARMREG_SP)) ? 4 : 0;
+
+				/* Compute size of saved registers restored below */
+				if (iphone_abi)
+					prev_sp_offset = 2 * 4;
+				else
+					prev_sp_offset = 1 * 4;
+				for (i = 0; i < 16; ++i) {
+					if (cfg->used_int_regs & (1 << i))
+						prev_sp_offset += 4;
+				}
+
+				// Point IP at the start of where the parameters will go after trimming stack.
+				// After locals and saved registers.
+				code = emit_big_add (code, ARMREG_IP, cfg->frame_reg, cfg->stack_usage + prev_sp_offset);
+
+				/* Copy arguments on the stack to our argument area */
+				// FIXME a fixed size memcpy is desirable here,
+				// at least for larger values of stack_usage.
+				//
+				// FIXME For most functions, with frames < 4K, we can use frame_reg directly here instead of IP.
+				// See https://github.com/mono/mono/pull/12079
+				// See https://github.com/mono/mono/pull/12079/commits/93e7007a9567b78fa8152ce404b372b26e735516
+				for (i = 0; i < call->stack_usage; i += sizeof (target_mgreg_t)) {
+					ARM_LDR_IMM (code, ARMREG_LR, ARMREG_SP, i + offset_sp);
+					ARM_STR_IMM (code, ARMREG_LR, ARMREG_IP, i + offset_ip);
+				}
+
+				if (save_ip)
+					ARM_POP (code, 1 << ARMREG_IP);
 			}
 
 			/*
@@ -5116,10 +5145,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			if (IS_HARD_FLOAT)
 				code = emit_float_args (cfg, call, code, &max_len, &offset);
 
-			if (ins->flags & MONO_INST_HAS_METHOD)
-				mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_METHOD, call->method);
-			else
-				mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_ABS, call->fptr);
+			mono_call_add_patch_info (cfg, call, code - cfg->native_code);
+
 			code = emit_call_seq (cfg, code);
 			ins->flags |= MONO_INST_GC_CALLSITE;
 			ins->backend.pc_offset = code - cfg->native_code;
@@ -5183,8 +5210,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			/* Uninitialized case */
 			g_assert (ins->sreg1 == ARMREG_R0);
 
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL,
-								 (gpointer)"mono_generic_class_init");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+								 GUINT_TO_POINTER (MONO_JIT_ICALL_mono_generic_class_init));
 			code = emit_call_seq (cfg, code);
 
 			/* Initialized case */
@@ -5291,16 +5318,16 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		case OP_THROW: {
 			if (ins->sreg1 != ARMREG_R0)
 				ARM_MOV_REG_REG (code, ARMREG_R0, ins->sreg1);
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, 
-					     (gpointer)"mono_arch_throw_exception");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+					     GUINT_TO_POINTER (MONO_JIT_ICALL_mono_arch_throw_exception));
 			code = emit_call_seq (cfg, code);
 			break;
 		}
 		case OP_RETHROW: {
 			if (ins->sreg1 != ARMREG_R0)
 				ARM_MOV_REG_REG (code, ARMREG_R0, ins->sreg1);
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, 
-					     (gpointer)"mono_arch_rethrow_exception");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID,
+					     GUINT_TO_POINTER (MONO_JIT_ICALL_mono_arch_rethrow_exception));
 			code = emit_call_seq (cfg, code);
 			break;
 		}
@@ -6003,7 +6030,7 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			ARM_CMP_REG_IMM (code, ARMREG_IP, 0, 0);
 			buf [0] = code;
 			ARM_B_COND (code, ARMCOND_EQ, 0);
-			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, "mono_threads_state_poll");
+			mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID, GUINT_TO_POINTER (MONO_JIT_ICALL_mono_threads_state_poll));
 			code = emit_call_seq (cfg, code);
 			arm_patch (buf [0], code);
 			break;
@@ -6038,9 +6065,9 @@ void
 mono_arch_register_lowlevel_calls (void)
 {
 	/* The signature doesn't matter */
-	mono_register_jit_icall (mono_arm_throw_exception, "mono_arm_throw_exception", mono_create_icall_signature ("void"), TRUE);
-	mono_register_jit_icall (mono_arm_throw_exception_by_token, "mono_arm_throw_exception_by_token", mono_create_icall_signature ("void"), TRUE);
-	mono_register_jit_icall (mono_arm_unaligned_stack, "mono_arm_unaligned_stack", mono_create_icall_signature ("void"), TRUE);
+	mono_register_jit_icall (mono_arm_throw_exception, mono_icall_sig_void, TRUE);
+	mono_register_jit_icall (mono_arm_throw_exception_by_token, mono_icall_sig_void, TRUE);
+	mono_register_jit_icall (mono_arm_unaligned_stack, mono_icall_sig_void, TRUE);
 }
 
 #define patch_lis_ori(ip,val) do {\
@@ -6072,10 +6099,6 @@ mono_arch_patch_code_new (MonoCompile *cfg, MonoDomain *domain, guint8 *code, Mo
 	case MONO_PATCH_INFO_IP:
 		g_assert_not_reached ();
 		patch_lis_ori (ip, ip);
-		break;
-	case MONO_PATCH_INFO_METHOD_REL:
-		g_assert_not_reached ();
-		*((gpointer *)(ip)) = target;
 		break;
 	case MONO_PATCH_INFO_METHODCONST:
 	case MONO_PATCH_INFO_CLASS:
@@ -6272,7 +6295,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 			ARM_MOV_REG_IMM8 (code, ARMREG_R0, 0);
 		else
 			code = mono_arm_emit_load_imm (code, ARMREG_R0, (guint32)cfg->method);
-		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL, "mono_arm_unaligned_stack");
+		mono_add_patch_info (cfg, code - cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ID, GUINT_TO_POINTER (MONO_JIT_ICALL_mono_arm_unaligned_stack));
 		code = emit_call_seq (cfg, code);
 		arm_patch (buf [0], code);
 	}
@@ -6796,8 +6819,8 @@ mono_arch_emit_exceptions (MonoCompile *cfg)
 
 			ARM_MOV_REG_REG (code, ARMREG_R1, ARMREG_LR);
 			ARM_LDR_IMM (code, ARMREG_R0, ARMREG_PC, 0);
-			patch_info->type = MONO_PATCH_INFO_JIT_ICALL;
-			patch_info->data.name = "mono_arch_throw_corlib_exception";
+			patch_info->type = MONO_PATCH_INFO_JIT_ICALL_ID;
+			patch_info->data.jit_icall_id = MONO_JIT_ICALL_mono_arch_throw_corlib_exception;
 			patch_info->ip.i = code - cfg->native_code;
 			ARM_BL (code, 0);
 			cfg->thunk_area += THUNK_SIZE;
@@ -7495,4 +7518,20 @@ mono_arm_emit_aotconst (gpointer ji_list, guint8 *code, guint8 *buf, int dreg, i
 	code += 4;
 	ARM_LDR_REG_REG (code, dreg, ARMREG_PC, dreg);
 	return code;
+}
+
+gpointer
+mono_arch_load_function (MonoJitICallId jit_icall_id)
+{
+	gpointer target = NULL;
+	switch (jit_icall_id) {
+#undef MONO_AOT_ICALL
+#define MONO_AOT_ICALL(x) case MONO_JIT_ICALL_ ## x: target = (gpointer)x; break;
+	MONO_AOT_ICALL (mono_arm_resume_unwind)
+	MONO_AOT_ICALL (mono_arm_start_gsharedvt_call)
+	MONO_AOT_ICALL (mono_arm_throw_exception)
+	MONO_AOT_ICALL (mono_arm_throw_exception_by_token)
+	MONO_AOT_ICALL (mono_arm_unaligned_stack)
+	}
+	return target;
 }

@@ -170,7 +170,6 @@ test-bundle-local:
 		cp -L -R $(mcs_topdir)/class/lib/$$profile $(TEST_BUNDLE_PATH); \
 	done
 	cp -L $(top_srcdir)/external/xunit-binaries/*.dll $(top_srcdir)/external/xunit-binaries/*.exe $(top_srcdir)/external/xunit-binaries/*.config $(TEST_BUNDLE_PATH)/net_4_x/
-	cp -L $(top_srcdir)/external/xunit-binaries/xunit.execution.dotnet.dll $(TEST_BUNDLE_PATH)/net_4_x/tests/
 	$(MAKE) -C $(mcs_topdir)/tests test-bundle
 	$(MAKE) -C $(mcs_topdir)/errors test-bundle
 	$(MAKE) -C $(mcs_topdir)/packages test-bundle
@@ -219,7 +218,7 @@ mcs-compileall: mono-wrapper etc/mono/config
 	  else \
 		  MONO_PATH="$$mcs_topdir/class/lib/$$profile$(PLATFORM_PATH_SEPARATOR)$$save_MONO_PATH"; \
 	  fi; \
-	  export verifiable_files=`ls "$(mcs_topdir)/class/lib/$$profile/" | grep -E '\.(dll|exe)$$' $(foreach asm,$(VERIFY_TESTS_FILTER), | grep -v $(asm))` ; \
+	  export verifiable_files=`ls "$(mcs_topdir)/class/lib/$$profile/" | grep -E '\.(dll|exe)$$' | grep -v '\.dll\.dll$$' | grep -v '\.exe\.dll$$' $(foreach asm,$(VERIFY_TESTS_FILTER), | grep -v $(asm))` ; \
 	  export MONO_PATH; \
 	  for stub in $$verifiable_files; do \
 	  i=$(mcs_topdir)/class/lib/$$profile/$$stub ; \

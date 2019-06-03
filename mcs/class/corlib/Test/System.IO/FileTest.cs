@@ -913,6 +913,7 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		[Category("AndroidSdksNotWorking")]
 		public void Move ()
 		{
 			string bar = tmpFolder + Path.DirectorySeparatorChar + "bar";
@@ -1316,6 +1317,10 @@ namespace MonoTests.System.IO
 		[Test]
 		public void LastWriteTimeSubMsCopy ()
 		{
+#if MONOTOUCH
+			if (Version.TryParse (Environment.GetEnvironmentVariable ("SIMULATOR_RUNTIME_VERSION"), out Version simulatorVersion) && simulatorVersion.Major < 11 && new DriveInfo("/").DriveFormat == "apfs")
+				Assert.Inconclusive ("This test doesn't work on old iOS Simulator versions running on newer macOS with APFS.");
+#endif
 			string path = tmpFolder + Path.DirectorySeparatorChar + "lastWriteTimeSubMs";
 			if (File.Exists (path))
 				File.Delete (path);
@@ -2503,6 +2508,7 @@ namespace MonoTests.System.IO
 
 		[Test]
 		[Category("NotWasm")]
+		[Category("AndroidSdksNotWorking")]
 		public void ReplaceTest ()
 		{
 			string tmp = Path.Combine (tmpFolder, "ReplaceTest");
@@ -2589,6 +2595,9 @@ namespace MonoTests.System.IO
 		public static extern int symlink (string oldpath, string newpath);
 
 		[Test]
+#if MONOTOUCH_TV
+		[Ignore ("See bug #59239: https://bugzilla.xamarin.com/show_bug.cgi?id=59239")]
+#endif
 		[Category ("NotWasm")]
 		public void SymLinkStats() {
 			if (!RunningOnUnix)
@@ -2646,7 +2655,7 @@ namespace MonoTests.System.IO
 
 		[Test]
 #if MONOTOUCH_TV
-		[Ignore ("See bug #59239")]
+		[Ignore ("See bug #59239: https://bugzilla.xamarin.com/show_bug.cgi?id=59239")]
 #endif
 		[Category ("NotWasm")]
 		public void SymLinkLoop ()
